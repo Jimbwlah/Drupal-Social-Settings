@@ -1,0 +1,10 @@
+name = Social Settings
+description = Module that utilises the Entity API to store social media access settings
+package = "Social Modules"
+version = VERSION
+core = 7.x
+
+dependencies[] = entity
+dependencies[] = views
+
+files[] = social_settings.controller.inc

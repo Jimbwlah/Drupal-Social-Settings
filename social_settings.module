@@ -1,0 +1,393 @@
+<?php
+
+/**
+ * @file
+ * Provides a admin section to allow editing social settings
+ * 
+ * @author
+ * James Milward
+ */
+
+/**
+ * Implements hook_entity_info().
+ */
+function social_settings_entity_info() {
+  $return = array(
+    'social_settings' => array(
+      'label' => t('Social Settings'),
+      'entity class' => 'SocialSettings',
+      'controller class' => 'SocialSettingsController',
+      'base table' => 'social_settings',
+      'fieldable' => TRUE,
+      'entity keys' => array(
+        'id' => 'tkid',
+        'bundle' => 'type',
+      ),
+      'bundle keys' => array(
+        'bundle' => 'type',
+      ),
+      'bundles' => array(),
+      'load hook' => 'social_settings_load',
+      'view modes' => array(
+        'full' => array(
+          'label' => t('Default'),
+          'custom settings' => FALSE,
+        ),
+      ),
+      'label callback' => 'entity_class_label',
+      'uri callback' => 'entity_class_uri',
+      'module' => 'social_settings',
+      'access callback' => 'social_settings_access',
+    ),
+  );
+  $return['social_settings_type'] = array(
+    'label' => t('Social Settings Type'),
+    'entity class' => 'SocialSettingsType',
+    'controller class' => 'SocialSettingsTypeController',
+    'base table' => 'social_settings_type',
+    'fieldable' => FALSE,
+    'bundle of' => 'social_settings',
+    'exportable' => TRUE,
+    'entity keys' => array(
+      'id' => 'id',
+      'name' => 'type',
+      'label' => 'label',
+    ),
+    'module' => 'social_settings',
+    // Enable the entity API's admin UI.
+    'admin ui' => array(
+      'path' => 'admin/social-settings/type',
+      'file' => 'social_settings.admin.inc',
+      'controller class' => 'SocialSettingsTypeUIController',
+    ),
+    'access callback' => 'social_settings_type_access',
+  );
+
+  return $return;
+}
+
+/**
+ * Implements hook_entity_info_alter().
+ */
+function social_settings_entity_info_alter(&$entity_info) {
+  foreach (social_settings_types() as $type => $info) {
+    $entity_info['social_settings']['bundles'][$type] = array(
+      'label' => $info->label,
+      'admin' => array(
+        'path' => 'admin/social-settings/type/manage/%social_settings_type',
+        'real path' => 'admin/social-settings/type/manage/' . $type,
+        'bundle argument' => 4,
+      ),
+    );
+  }
+}
+
+/**
+ * Implements hook_menu().
+ */
+function social_settings_menu() {
+  $items = array();
+
+  $items['admin/social-settings/add'] = array(
+    'title' => 'Add social setting',
+    'page callback' => 'social_settings_admin_add_page',
+    'access arguments' => array('administer social_settings entities'),
+    'file' => 'social_settings.admin.inc',
+    'type' => MENU_LOCAL_ACTION
+  );
+
+  $social_setting_uri = 'admin/social-settings/%social_settings';
+  $social_setting_argument_position = 2;
+
+  $items[$social_setting_uri] = array(
+    'title callback' => 'entity_label',
+    'title arguments' => array('social_settings', $social_setting_argument_position),
+    'page callback' => 'social_settings_view',
+    'page arguments' => array($social_setting_argument_position),
+    'access callback' => 'entity_access',
+    'access arguments' => array('view', 'social_settings', $social_setting_argument_position),
+    'file' => 'social_settings.pages.inc',
+  );
+
+  $items[$social_setting_uri . '/edit'] = array(
+    'title' => 'Edit',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('social_settings_form', $social_setting_argument_position),
+    'access callback' => 'entity_access',
+    'access arguments' => array('edit', 'social_settings', $social_setting_argument_position),
+    'file' => 'social_settings.admin.inc',
+    'type' => MENU_LOCAL_TASK,
+    'context' => MENU_CONTEXT_PAGE | MENU_CONTEXT_INLINE,
+  );
+  
+  $items[$social_setting_uri . '/delete'] = array(
+    'title' => 'Delete social setting',
+    'title callback' => 'social_settings_label',
+    'title arguments' => array($social_setting_argument_position),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('social_settings_delete_form', $social_setting_argument_position),
+    'access callback' => 'entity_access',
+    'access arguments' => array('edit', 'social_settings', $social_setting_argument_position),
+    'file' => 'social_settings.admin.inc',
+  );
+
+  foreach (social_settings_types() as $type => $info) {
+    $items['admin/social-settings/add/' . $type] = array(
+      'title' => 'Add social setting',
+      'page callback' => 'social_settings_add',
+      'page arguments' => array(3),
+      'access callback' => 'entity_access',
+      'access arguments' => array('create', 'social_settings', $type),
+      'file' => 'social_settings.admin.inc',
+    );
+  }
+  
+  $items['admin/social_settings/type/%social_settings_type/delete'] = array(
+    'title' => 'Delete',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('social_settings_type_form_delete_confirm', 4),
+    'access arguments' => array('administer social_settings types'),
+    'weight' => 1,
+    'type' => MENU_NORMAL_ITEM,
+    'file' => 'social_settings.admin.inc',
+  );
+
+  return $items;
+}
+
+/**
+ * Override of menu_link_alter()
+**/
+function social_settings_menu_link_alter(&$item) {
+  global $user;
+  
+  $allow = FALSE;
+  
+  // Check permissions
+  foreach ($user->roles as $role) {
+    if ($role == 'administrator') {
+      $allow = TRUE;
+    }
+  }
+  
+  // Remove if not admin
+  if ($allow == FALSE) {
+    if (strstr($item['link_path'], 'social-settings')) {
+      $item['options']['alter'] = TRUE; 
+    }
+  }
+   
+}
+
+/**
+ * Override of translated_menu_link_alter()
+**/
+function social_settings_translated_menu_link_alter(&$link) {
+  global $user;
+  
+  $allow = FALSE;
+  
+  // Check permissions
+  foreach ($user->roles as $role) {
+    if ($role == 'administrator') {
+      $allow = TRUE;
+    }
+  }
+  
+  // Remove if not admin
+  if ($allow == FALSE) {
+    if (strstr($link['link_path'], 'social-settings')) {
+      $link['hidden'] = 1;
+    }
+  }
+  
+}
+
+/**
+ * Implements hook_permission().
+ */
+function social_settings_permission() {
+  $permissions = array(
+    'administer social_settings types' => array(
+      'title' => t('Administer social settings types'),
+      'description' => t('Allows users to configure social settings types and their fields.'),
+      'restrict access' => TRUE,
+    ),
+    'create social_settings entities' => array(
+      'title' => t('Create tasks'),
+      'description' => t('Allows users to create social settings.'),
+      'restrict access' => TRUE,
+    ),
+    'view social_settings entities' => array(
+      'title' => t('View social settings'),
+      'description' => t('Allows users to view social settings.'),
+      'restrict access' => TRUE,
+    ),
+    'edit any social_settings entities' => array(
+      'title' => t('Edit any tasks'),
+      'description' => t('Allows users to edit any social setting.'),
+      'restrict access' => TRUE,
+    ),
+    'edit own social_settings entities' => array(
+      'title' => t('Edit own tasks'),
+      'description' => t('Allows users to edit own social settings.'),
+      'restrict access' => TRUE,
+    ),
+  );
+
+  return $permissions;
+}
+
+
+/**
+ * Implements hook_entity_property_info_alter().
+ */
+function social_settings_entity_property_info_alter(&$info) {
+  $properties = &$info['social_settings']['properties'];
+  $properties['created'] = array(
+    'label' => t("Date created"),
+    'type' => 'date',
+    'description' => t("The date the node was posted."),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'administer nodes',
+    'schema field' => 'created',
+  );
+  $properties['changed'] = array(
+    'label' => t("Date changed"),
+    'type' => 'date',
+    'schema field' => 'changed',
+    'description' => t("The date the node was most recently updated."),
+  );
+  $properties['uid'] = array(
+    'label' => t("Author"),
+    'type' => 'user',
+    'description' => t("The author of the social setting."),
+    'setter callback' => 'entity_property_verbatim_set',
+    'setter permission' => 'administer social_settings entities',
+    'required' => TRUE,
+    'schema field' => 'uid',
+  );
+}
+
+
+/*******************************************************************************
+ ********************************* Social Settings API's **********************************
+ ******************************************************************************/
+
+/**
+ * Access callback for social settings.
+ */
+function social_settings_access($op, $task, $account = NULL, $entity_type = NULL) {
+  global $user;
+
+  if (!isset($account)) {
+    $account = $user;
+  }
+  switch ($op) {
+    case 'create':
+      return user_access('administer social_settings entities', $account)
+          || user_access('create social_settings entities', $account);
+    case 'view':
+      return user_access('administer social_settings entities', $account)
+          || user_access('view social_settings entities', $account);
+    case 'edit':
+      return user_access('administer social_settings entities')
+          || user_access('edit any social_settings entities')
+          || (user_access('edit own social_settings entities') && ($task->uid == $account->uid));
+  }
+}
+
+/**
+ * Load a social setting.
+ */
+function social_settings_load($tkid, $reset = FALSE) {
+  $tasks = social_settings_load_multiple(array($tkid), array(), $reset);
+  return reset($tasks);
+}
+
+/**
+ * Load multiple social settings based on certain conditions.
+ */
+function social_settings_load_multiple($tkids = array(), $conditions = array(), $reset = FALSE) {
+  return entity_load('social_settings', $tkids, $conditions, $reset);
+}
+
+/**
+ * Save social setting.
+ */
+function social_settings_save($task) {
+  entity_save('social_settings', $task);
+}
+
+/**
+ * Delete single social setting.
+ */
+function social_settings_delete($task) {
+  entity_delete('social_settings', entity_id('social_settings', $task));
+}
+
+/**
+ * Delete multiple social settings.
+ */
+function social_settings_delete_multiple($task_ids) {
+  entity_delete_multiple('social_settings', $task_ids);
+}
+
+
+/*******************************************************************************
+ ****************************** Social Setting Type API's ********************************
+ ******************************************************************************/
+
+/**
+ * Access callback for social setting Type.
+ */
+function social_settings_type_access($op, $entity = NULL) {
+  return user_access('administer social_settings types');
+}
+
+/**
+ * Load social setting Type.
+ */
+function social_settings_type_load($task_type) {
+  return social_settings_types($task_type);
+}
+
+/**
+ * List of social setting Types.
+ */
+function social_settings_types($type_name = NULL) {
+  $types = entity_load_multiple_by_name('social_settings_type', isset($type_name) ? array($type_name) : FALSE);
+  return isset($type_name) ? reset($types) : $types;
+}
+
+/**
+ * Save social setting type entity.
+ */
+function social_settings_type_save($task_type) {
+  entity_save('social_settings_type', $task_type);
+}
+
+/**
+ * Delete single case type.
+ */
+function social_settings_type_delete($task_type) {
+  entity_delete('social_settings_type', entity_id('social_settings_type', $task_type));
+}
+
+/**
+ * Delete multiple case types.
+ */
+function social_settings_type_delete_multiple($task_type_ids) {
+  entity_delete_multiple('social_settings_type', $task_type_ids);
+}
+
+/**
+  * Implements hook_views_api().
+  */
+function social_settings_views_api() {
+  return array(
+    'api' => 3,
+    'path' => drupal_get_path('module', 'social_settings'),
+  );
+}
+
